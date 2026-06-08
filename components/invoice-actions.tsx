@@ -7,6 +7,7 @@ import type { InvoiceData } from '@/lib/invoice-types'
 import { computeTotals, formatCurrency, lineTotal } from '@/lib/invoice-types'
 import jsPDF from 'jspdf'
 import { createPaystackPaymentLink } from '@/app/actions/create-payment-link'
+import { saveInvoice } from '@/app/actions/save-invoice'
 
 export function InvoiceActions({ data }: { data: InvoiceData }) {
   const [generating, setGenerating] = useState(false)
@@ -15,7 +16,7 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
   const [copied, setCopied] = useState(false)
   const { subtotal, tax, total } = computeTotals(data)
 
-  function handleDownloadPdf() {
+  async function handleDownloadPdf() {
     setDownloading(true)
     try {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
@@ -154,6 +155,9 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
         const lines = pdf.splitTextToSize(data.notes, W - 80)
         pdf.text(lines, 40, y)
       }
+
+      // Save to DynamoDB
+      await saveInvoice(data)
 
       pdf.save(`${data.invoiceNumber || 'invoice'}.pdf`)
     } catch (err) {
