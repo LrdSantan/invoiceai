@@ -1,19 +1,22 @@
 'use client'
 
 import { useState } from 'react'
-import { Download, Link2, Check, Copy, Loader2 } from 'lucide-react'
+import { Download, Link2, Check, Copy, Loader2, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { InvoiceData } from '@/lib/invoice-types'
 import { computeTotals, formatCurrency, lineTotal } from '@/lib/invoice-types'
 import jsPDF from 'jspdf'
 import { createPaystackPaymentLink } from '@/app/actions/create-payment-link'
 import { saveInvoice } from '@/app/actions/save-invoice'
+import { anchorInvoice } from '@/app/actions/anchor-invoice'
 
 export function InvoiceActions({ data }: { data: InvoiceData }) {
   const [generating, setGenerating] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [anchoring, setAnchoring] = useState(false)
   const [paymentLink, setPaymentLink] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [casperResult, setCasperResult] = useState<{ deployHash: string; invoiceHash: string } | null>(null)
   const { subtotal, tax, total } = computeTotals(data)
 
   async function handleDownloadPdf() {
@@ -47,7 +50,7 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
       pdf.setFontSize(10)
       pdf.setFont('helvetica', 'normal')
       pdf.setTextColor(113, 113, 122)
-      pdf.text(data.invoiceNumber || '—', W - 40, y + 30, { align: 'right' })
+      pdf.text(data.invoiceNumber || '–', W - 40, y + 30, { align: 'right' })
 
       y += 60
       pdf.setDrawColor(228, 228, 231)
@@ -69,7 +72,7 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
       pdf.text(data.clientEmail || 'client@email.com', 40, y)
 
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-      const due = data.dueDate ? new Date(data.dueDate + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+      const due = data.dueDate ? new Date(data.dueDate + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '–'
       pdf.setTextColor(161, 161, 170)
       pdf.text('Issued', W - 160, y - 13)
       pdf.setTextColor(24, 24, 27)
@@ -156,9 +159,7 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
         pdf.text(lines, 40, y)
       }
 
-      // Save to DynamoDB
       await saveInvoice(data)
-
       pdf.save(`${data.invoiceNumber || 'invoice'}.pdf`)
     } catch (err) {
       console.error('PDF error:', err)
@@ -187,6 +188,18 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
     setPaymentLink(result.url)
   }
 
+  async function handleAnchorOnCasper() {
+    setAnchoring(true)
+    setCasperResult(null)
+    const result = await anchorInvoice(data)
+    setAnchoring(false)
+    if (!result.ok) {
+      alert('Casper anchor failed: ' + result.error)
+      return
+    }
+    setCasperResult({ deployHash: result.deployHash, invoiceHash: result.invoiceHash })
+  }
+
   async function copyLink() {
     if (!paymentLink) return
     await navigator.clipboard.writeText(paymentLink)
@@ -203,11 +216,7 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
           disabled={downloading}
           className="gap-2 bg-transparent font-medium"
         >
-          {downloading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
+          {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           {downloading ? 'Generating...' : 'Download PDF'}
         </Button>
         <Button
@@ -215,14 +224,32 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
           disabled={generating}
           className="gap-2 font-medium"
         >
-          {generating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Link2 className="h-4 w-4" />
-          )}
+          {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
           Generate Payment Link
         </Button>
       </div>
+
+      <Button
+        variant="outline"
+        onClick={handleAnchorOnCasper}
+        disabled={anchoring}
+        className="w-full gap-2 border-purple-500/40 bg-purple-500/5 font-medium text-purple-600 hover:bg-purple-500/10"
+      >
+        {anchoring ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+        {anchoring ? 'Anchoring on Casper...' : 'Anchor Invoice on Casper Network'}
+      </Button>
+
+      {casperResult && (
+        <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-1">
+          <p className="text-xs font-medium text-purple-600">✓ Invoice anchored on Casper Testnet</p>
+          <p className="text-xs text-muted-foreground">
+            Invoice hash: <code className="text-xs">{casperResult.invoiceHash.slice(0, 16)}...</code>
+          </p>
+          
+            <a href={`https://testnet.cspr.live/deploy/${casperResult.deployHash}`} target="_blank" rel="noopener noreferrer" className="text-xs text-purple-600 underline">View on Casper Explorer</a>
+        </div>
+      )}
+
       {paymentLink && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
           <p className="mb-2 text-xs font-medium text-primary">
@@ -232,23 +259,8 @@ export function InvoiceActions({ data }: { data: InvoiceData }) {
             <code className="flex-1 truncate rounded-md bg-background px-2.5 py-1.5 text-xs text-muted-foreground">
               {paymentLink}
             </code>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={copyLink}
-              className="h-8 shrink-0 gap-1.5"
-            >
-              {copied ? (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy
-                </>
-              )}
+            <Button size="sm" variant="secondary" onClick={copyLink} className="h-8 shrink-0 gap-1.5">
+              {copied ? <><Check className="h-3.5 w-3.5" />Copied</> : <><Copy className="h-3.5 w-3.5" />Copy</>}
             </Button>
           </div>
         </div>
